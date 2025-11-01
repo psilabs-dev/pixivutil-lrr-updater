@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Dict, List
 import aiohttp.client_exceptions
 import aiosqlite
@@ -19,6 +20,24 @@ class TaskResult(enum.Enum):
 
     SUCCESS = "SUCCESS"
     PIXIVUTIL_NO_METADATA = "PIXIVUTIL_NO_METADATA"
+
+# sanitize the text according to the search syntax: https://sugoi.gitbook.io/lanraragi/basic-operations/searching
+def sanitize_tag(text: str) -> str:
+    sanitized = text
+    
+    # replace nonseparator characters with empty str. (", ?, *, %, $, :)
+    sanitized = re.sub(r'["?*%$:]', '', sanitized)
+
+    # replace underscore with space.
+    sanitized = sanitized.replace('_', ' ')
+
+    # if a dash is preceded by space, remove; otherwise, keep.
+    sanitized = sanitized.replace(' -', ' ')
+
+    if sanitized != text:
+        logger.info(f"\"{text}\" was sanitized.")
+
+    return sanitized
 
 async def update_archive_metadata(
     arcid: str, lrr: LRRClient, db: aiosqlite.Connection
@@ -67,7 +86,7 @@ async def update_archive_metadata(
     if not member_row:
         raise Exception(f"Pixiv artwork has no member: arcid={arcid}, pixiv_id={pixiv_id}")
     member_name: str = member_row[0]
-    tag_list.append(f"artist:{member_name}")
+    tag_list.append(f"artist:{sanitize_tag(member_name)}")
 
     # get image to tag info
     i2t_rows = await (await db.execute(
@@ -75,7 +94,7 @@ async def update_archive_metadata(
     )).fetchall()
     for i2t in i2t_rows:
         tag_id = i2t[0]
-        tag_list.append(tag_id)
+        tag_list.append(sanitize_tag(tag_id))
 
         # get en translation (if exists)
         entl_row = await (await db.execute(
@@ -83,7 +102,7 @@ async def update_archive_metadata(
         )).fetchone()
         if entl_row:
             en_translation = entl_row[0]
-            tag_list.append(en_translation)
+            tag_list.append(sanitize_tag(en_translation))
 
     # get create and update info
     date_row = await (await db.execute(
@@ -91,8 +110,8 @@ async def update_archive_metadata(
     )).fetchone()
 
     if date_row:
-        created_date_epoch: int = date_row[0]
-        uploaded_date_epoch: int = date_row[1]
+        created_date_epoch: int = int(date_row[0])
+        uploaded_date_epoch: int = int(date_row[1])
         tag_list.append("date_created:" + str(created_date_epoch))
         tag_list.append("date_uploaded:" + str(uploaded_date_epoch))
 
